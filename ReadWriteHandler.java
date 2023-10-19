@@ -1,7 +1,7 @@
 // Code modified from https://zoo.cs.yale.edu/classes/cs434/cs434-2023-fall/assignments/programming-proj1/examples/SelectServer/EchoLineReadWriteHandler.java
 
 import java.nio.*;
-import java.nio.channels.SelectionKey;
+import java.nio.channels.*;
 import java.io.IOException;
 
 public class ReadWriteHandler implements IReadWriteHandler {
@@ -9,11 +9,13 @@ public class ReadWriteHandler implements IReadWriteHandler {
     private ByteBuffer outBuffer;
 
     private StringBuffer request;
+    private boolean keepalive;
 
     private enum State {
         READING_REQUEST, 
         PROCESSING_REQUEST,
-        SENDING_RESPONSE
+        SENDING_RESPONSE, 
+        CONN_CLOSED
     }
     private State state;
 
@@ -22,6 +24,9 @@ public class ReadWriteHandler implements IReadWriteHandler {
         outBuffer = ByteBuffer.allocate(4096);
 
         state = State.READING_REQUEST;
+
+        request = new StringBuffer(4096);
+        keepalive = false;
     }
 
     public int getInitOps() {
@@ -31,6 +36,44 @@ public class ReadWriteHandler implements IReadWriteHandler {
     public void handleException() {
         System.out.println("ReadWriteHandler: handleException()");
     }
+
+    private void updateSelectorState(SelectionKey key) throws IOException {
+		Debug.DEBUG("updating selector state ...", DebugType.NONSERVER);
+
+        if (state == State.CONN_CLOSED) {
+            Debug.DEBUG("Connection closed; shutdown", DebugType.NONSERVER);
+
+            key.cancel();
+            try {
+                key.channel().close();
+                // in a more general design, call have a handleException
+            } catch (IOException cex) {
+            }
+            return;
+        }
+
+		int nextState = key.interestOps();
+
+        switch (state) {
+            case READING_REQUEST:
+                nextState = nextState | SelectionKey.OP_READ;
+                nextState = nextState & ~SelectionKey.OP_WRITE;
+                Debug.DEBUG("New state: reading -> +Read -Write", DebugType.NONSERVER);
+                break;
+            case PROCESSING_REQUEST:
+                nextState = nextState & ~SelectionKey.OP_READ;
+                nextState = nextState & ~SelectionKey.OP_WRITE;
+                Debug.DEBUG("New state: processing -> -Read -Write", DebugType.NONSERVER);
+                break;
+            case SENDING_RESPONSE:
+                nextState = nextState & ~SelectionKey.OP_READ;
+                nextState = nextState | SelectionKey.OP_WRITE;
+                Debug.DEBUG("New state: writing -> -Read +Write", DebugType.NONSERVER);
+                break;
+        }
+
+		key.interestOps(nextState);
+	}
 
     public void handleRead(SelectionKey key) throws IOException {
 		// a connection is ready to be read
@@ -45,47 +88,10 @@ public class ReadWriteHandler implements IReadWriteHandler {
 
 		// update state
 		updateSelectorState(key);
-
-		Debug.DEBUG("ReadWriteHandler: request fully read");
-	}
-
-	private void updateSelectorState(SelectionKey key) throws IOException {
-		Debug.DEBUG("updating selector state ...", DebugType.NONSERVER);
-
-		if (channelClosed)
-			return;
-
-		/*
-		 * if (responseSent) { Debug.DEBUG(
-		 * "***Response sent; shutdown connection"); client.close();
-		 * dispatcher.deregisterSelection(sk); channelClosed = true; return; }
-		 */
-
-		int nextState = key.interestOps();
-
-        switch (state) {
-            case State.READING_REQUEST:
-                nextState = nextState | SelectionKey.OP_READ;
-                nextState = nextState & ~SelectionKey.OP_WRITE;
-                Debug.DEBUG("New state: reading -> +Read -Write", DebugType.NONSERVER);
-                break;
-            case State.PROCESSING_REQUEST:
-                nextState = nextState & ~SelectionKey.OP_READ;
-                nextState = nextState & ~SelectionKey.OP_WRITE;
-                Debug.DEBUG("New state: processing -> -Read -Write", DebugType.NONSERVER);
-                break;
-            case State.SENDING_RESPONSE:
-                nextState = nextState & ~SelectionKey.OP_READ;
-                nextState = nextState | SelectionKey.OP_WRITE;
-                Debug.DEBUG("New state: writing -> -Read +Write", DebugType.NONSERVER);
-                break;
-        }
-
-		key.interestOps(nextState);
 	}
 
 	public void handleWrite(SelectionKey key) throws IOException {
-		Debug.DEBUG("ReadWriteHandler: data ready to be written");
+		Debug.DEBUG("ReadWriteHandler: data ready to be written", DebugType.NONSERVER);
 
 		// process data
 		SocketChannel client = (SocketChannel) key.channel();
@@ -94,14 +100,20 @@ public class ReadWriteHandler implements IReadWriteHandler {
 		Debug.DEBUG("handleWrite: write " + writeBytes + " bytes; after write " + outBuffer, DebugType.NONSERVER);
 
 		if (state == State.SENDING_RESPONSE && (outBuffer.remaining() == 0)) {
-			state = State.READING_REQUEST;
+            if (keepalive) 
+			    state = State.READING_REQUEST;
+            else
+                state = State.CONN_CLOSED;
+
 			Debug.DEBUG("handleWrite: response sent", DebugType.NONSERVER);
 		}
 
+        outBuffer.clear();
+        if (outBuffer.remaining() == 0)
+            Debug.DEBUG("slay", DebugType.NONSERVER);
+
 		// update state
 		updateSelectorState(key);
-
-		// try {Thread.sleep(5000);} catch (InterruptedException e) {}
 	}
 
 	private void processInBuffer(SelectionKey key) throws IOException {
@@ -116,11 +128,21 @@ public class ReadWriteHandler implements IReadWriteHandler {
 			Debug.DEBUG("handleRead: readBytes == -1", DebugType.NONSERVER);
 		} else {
 			inBuffer.flip(); // read input
-			// outBuffer = ByteBuffer.allocate( inBuffer.remaining() );
-			while (!requestComplete && inBuffer.hasRemaining() && request.length() < request.capacity()) {
+			outBuffer = ByteBuffer.allocate( inBuffer.remaining() );
+
+            // Debug.DEBUG(String.valueOf(inBuffer.hasRemaining()), DebugType.NONSERVER);
+            // Debug.DEBUG(Integer.toString(request.length()), DebugType.NONSERVER);
+            // Debug.DEBUG(Integer.toString(request.capacity()), DebugType.NONSERVER);
+			while (state != State.PROCESSING_REQUEST && inBuffer.hasRemaining() && request.length() < request.capacity()) {
 				char ch = (char) inBuffer.get();
 				Debug.DEBUG("Ch: " + ch, DebugType.NONSERVER);
 				request.append(ch);
+                if (ch == 'k') {
+                    keepalive = true;
+                }
+                if (ch == 'n') {
+                    keepalive = false;
+                }
 				if (ch == '\r' || ch == '\n') {
 					state = State.PROCESSING_REQUEST;
 					// client.shutdownInput();
@@ -134,19 +156,21 @@ public class ReadWriteHandler implements IReadWriteHandler {
 		if (state == State.PROCESSING_REQUEST) {
 			generateResponse();
 		}
-
 	}
 
 	private void generateResponse() {
+        Debug.DEBUG("req length: " + Integer.toString(request.length()), DebugType.NONSERVER);
 		for (int i = 0; i < request.length(); i++) {
+            Debug.DEBUG("i: " + Integer.toString(i), DebugType.NONSERVER);
 			char ch = (char) request.charAt(i);
 
 			ch = Character.toUpperCase(ch);
 
 			outBuffer.put((byte) ch);
 		}
+        outBuffer.put((byte) '\n');
 		outBuffer.flip();
+        request.delete(0, request.length());
 		state = State.SENDING_RESPONSE;
 	} 
-
 }

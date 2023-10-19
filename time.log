@@ -2,4 +2,4 @@ Date    | Time      | Task
 < 10/15     6hrs        reading http server example code; brainstorming design
 10/15       2hrs        reading http server example code; parsing design
 10/19       2hrs20      initializing git and github; basic file structure; tried to set up testing environment (didn't work); reimplemented SelectServer from class examples
-10/19       Time        
+10/19       1pm-20min        implemented keepalive
