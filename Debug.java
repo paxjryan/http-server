@@ -3,6 +3,7 @@ public class Debug {
     private static boolean DEBUG_SERVER = true;
     private static boolean DEBUG_SERVER_VERBOSE = true;
     private static boolean DEBUG_NONSERVER = true;
+    private static boolean DEBUG_PARSING = true;
 
     public static void DEBUG(String s, DebugType t) {
         if (DEBUG) {
@@ -13,6 +14,9 @@ public class Debug {
                 System.out.println(s);
             }
             if (t == DebugType.NONSERVER && DEBUG_NONSERVER) {
+                System.out.println(s);
+            }
+            if (t == DebugType.PARSING && DEBUG_PARSING) {
                 System.out.println(s);
             }
         }

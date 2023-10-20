@@ -118,6 +118,7 @@ public class ReadWriteHandler implements IReadWriteHandler {
 
 	private void processInBuffer(SelectionKey key) throws IOException {
 		Debug.DEBUG("processInBuffer", DebugType.NONSERVER);
+
 		SocketChannel client = (SocketChannel) key.channel();
 		int readBytes = client.read(inBuffer);
 		Debug.DEBUG("handleRead: Read data from connection " + client + " for " + readBytes + " byte(s); to buffer "
@@ -128,26 +129,20 @@ public class ReadWriteHandler implements IReadWriteHandler {
 			Debug.DEBUG("handleRead: readBytes == -1", DebugType.NONSERVER);
 		} else {
 			inBuffer.flip(); // read input
-			outBuffer = ByteBuffer.allocate( inBuffer.remaining() );
+			outBuffer = ByteBuffer.allocate( inBuffer.remaining() + 1 );        
 
-            // Debug.DEBUG(String.valueOf(inBuffer.hasRemaining()), DebugType.NONSERVER);
-            // Debug.DEBUG(Integer.toString(request.length()), DebugType.NONSERVER);
-            // Debug.DEBUG(Integer.toString(request.capacity()), DebugType.NONSERVER);
 			while (state != State.PROCESSING_REQUEST && inBuffer.hasRemaining() && request.length() < request.capacity()) {
 				char ch = (char) inBuffer.get();
-				Debug.DEBUG("Ch: " + ch, DebugType.NONSERVER);
+				Debug.DEBUG("Ch: " + String.valueOf(ch) + " (" + Integer.toString(ch) + ")", DebugType.NONSERVER);
 				request.append(ch);
-                if (ch == 'k') {
-                    keepalive = true;
+
+                // "\n\r\n" (Windows) or "\r\r\n" (Mac) signal end of headers
+                if (request.length() >= 3 && 
+                        (request.substring(request.length() - 3).equals("\n\r\n") || 
+                        request.substring(request.length() - 3).equals("\r\r\n"))) {
+                    state = State.PROCESSING_REQUEST;
+                    Debug.DEBUG("handleRead: find terminating chars", DebugType.NONSERVER);
                 }
-                if (ch == 'n') {
-                    keepalive = false;
-                }
-				if (ch == '\r' || ch == '\n') {
-					state = State.PROCESSING_REQUEST;
-					// client.shutdownInput();
-					Debug.DEBUG("handleRead: find terminating chars", DebugType.NONSERVER);
-				} 
 			} 
 		}
 
@@ -158,19 +153,28 @@ public class ReadWriteHandler implements IReadWriteHandler {
 		}
 	}
 
-	private void generateResponse() {
-        Debug.DEBUG("req length: " + Integer.toString(request.length()), DebugType.NONSERVER);
-		for (int i = 0; i < request.length(); i++) {
-            Debug.DEBUG("i: " + Integer.toString(i), DebugType.NONSERVER);
-			char ch = (char) request.charAt(i);
+	private void generateResponse() throws IOException {
+        Request r = new Request();
+        r.parseRequest(request.toString());
+        Debug.DEBUG(r.toString(), DebugType.NONSERVER);
 
-			ch = Character.toUpperCase(ch);
+        if (r.getReqMethod() == Request.ReqMethod.GET) {
+            Debug.DEBUG("method type GET", null);
+        } else if (r.getReqMethod() == Request.ReqMethod.POST) {
+            Debug.DEBUG("method type POST", null);
+        }
 
-			outBuffer.put((byte) ch);
-		}
-        outBuffer.put((byte) '\n');
-		outBuffer.flip();
-        request.delete(0, request.length());
-		state = State.SENDING_RESPONSE;
+        // Debug.DEBUG("req length: " + Integer.toString(request.length()), DebugType.NONSERVER);
+		// for (int i = 0; i < request.length(); i++) {
+		// 	char ch = (char) request.charAt(i);
+
+		// 	ch = Character.toUpperCase(ch);
+
+		// 	outBuffer.put((byte) ch);
+		// }
+        // outBuffer.put((byte) '\n');
+		// outBuffer.flip();
+        // request.delete(0, request.length());
+		// state = State.SENDING_RESPONSE;
 	} 
 }
