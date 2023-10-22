@@ -24,6 +24,7 @@ public class Request {
     // request method line
     private ReqMethod reqMethod;
     private String url;
+    private String protocol;
 
     // other request headers
     private HashMap<String, String> requestHeaders;
@@ -40,7 +41,14 @@ public class Request {
         return url;
     }
 
+    public String getReqProtocol() {
+        return protocol;
+    }
+
+    // Returns String value of headerName key in requestHeaders, or null if not found
     public String lookupHeader(String headerName) {
+        Debug.DEBUG("attempting lookup of key " + headerName, DebugType.PARSING);
+
         return requestHeaders.get(headerName);
     }
 
@@ -75,62 +83,38 @@ public class Request {
     }
 
     private void parseRequestLine(String reqLine) { //throws RequestFormatException {
-        int idx = reqLine.indexOf(" ");
-        if (idx == -1) {
-            // throw req parsing error
+        String[] request = reqLine.split("\\s");
+
+        if (request.length < 3) {
+            // TODO: throw req parsing error
         }
 
-        if (reqLine.substring(0, idx).equals("GET")) {
+        if (request[0].equals("GET")) {
             reqMethod = ReqMethod.GET;        
             Debug.DEBUG("Parsing req method: GET", DebugType.PARSING);
-        } else if (reqLine.substring(0, idx).equals("POST")) {
+        } else if (request[0].equals("POST")) {
             reqMethod = ReqMethod.POST;
             Debug.DEBUG("Parsing req method: POST", DebugType.PARSING);
         } else {
             // throw req parsing error
             Debug.DEBUG("Parsing req method error", DebugType.PARSING);
         }
+        
+        // non-safe url, need to check for validity elsewhere
+        url = request[1];
+        protocol = request[2];
 
-        // non-safe url; need to check if it is valid elsewhere
-        url = reqLine.substring(idx+1, reqLine.length());
         Debug.DEBUG("Parsing req url: " + url, DebugType.PARSING);
+        Debug.DEBUG("Parsing req protocol: " + protocol, DebugType.PARSING);
     }
 
     private void parseHeaderLine(String headerLine) { //throws RequestFormatException {
-        int idx = headerLine.indexOf(":");
-        if (idx == -1) {
-            // throw header parsing error
+        String[] header = headerLine.split(": ");
+        if (header.length < 2) {
+            // TODO: throw header parsing error
         }
-
-        String header = headerLine.substring(0, idx);
-        String headerVal = headerLine.substring(idx+2);
-        requestHeaders.put(header, headerVal);
-        Debug.DEBUG("Parsing header: " + header + ", val: " + headerVal, DebugType.PARSING);
+        
+        requestHeaders.put(header[0], header[1]);
+        Debug.DEBUG("Parsing header: " + header[0] + ", val: " + header[1], DebugType.PARSING);
     }
-
-    // // return the str in strs which matches the start of sb and deletes it from the beginning of sb, or
-    // // returns empty string if no match found
-    // private String findMatchingStartStr(StringBuffer sb, String[] strs) {
-    //     for (int i = 0; i < strs.length; i++) {
-    //         String str = strs[i];
-    //         if (sb.substring(0, str.length).equals(str)) {
-    //             sb.delete(0, str.length());
-    //             return str;
-    //         }
-    //     }
-    //     return "";
-    // } 
-
-    // private String[] parseLines(StringBuffer sb) {
-    //     String[] lines = new String[];
-
-    //     for (int i = 0; i < sb.length(); i++) {
-
-    //     }
-    // }
-
-    // given string and list of suspected starting strings:
-    // find which string it matches and apply behavior, or
-    // if no matches, throw parsing error
-
 }

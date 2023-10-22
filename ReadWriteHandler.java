@@ -2,13 +2,23 @@
 
 import java.nio.*;
 import java.nio.channels.*;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.util.*;
+// for response header Date
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.Instant;
 
 public class ReadWriteHandler implements IReadWriteHandler {
     private ByteBuffer inBuffer;
     private ByteBuffer outBuffer;
 
     private StringBuffer request;
+    private StringBuffer responseBody;
     private boolean keepalive;
 
     private enum State {
@@ -26,6 +36,7 @@ public class ReadWriteHandler implements IReadWriteHandler {
         state = State.READING_REQUEST;
 
         request = new StringBuffer(4096);
+        responseBody = new StringBuffer(4096);
         keepalive = false;
     }
 
@@ -42,10 +53,15 @@ public class ReadWriteHandler implements IReadWriteHandler {
 
         if (state == State.CONN_CLOSED) {
             Debug.DEBUG("Connection closed; shutdown", DebugType.NONSERVER);
+            // try {
+            //     Thread.sleep(1000);
+            // } catch (InterruptedException ex) {
 
-            key.cancel();
+            // }
+
             try {
                 key.channel().close();
+                key.cancel();
                 // in a more general design, call have a handleException
             } catch (IOException cex) {
             }
@@ -109,8 +125,6 @@ public class ReadWriteHandler implements IReadWriteHandler {
 		}
 
         outBuffer.clear();
-        if (outBuffer.remaining() == 0)
-            Debug.DEBUG("slay", DebugType.NONSERVER);
 
 		// update state
 		updateSelectorState(key);
@@ -125,11 +139,11 @@ public class ReadWriteHandler implements IReadWriteHandler {
 				+ inBuffer, DebugType.NONSERVER);
 
 		if (readBytes == -1) { // end of stream
-			state = State.PROCESSING_REQUEST;
+			state = State.SENDING_RESPONSE;
 			Debug.DEBUG("handleRead: readBytes == -1", DebugType.NONSERVER);
 		} else {
 			inBuffer.flip(); // read input
-			outBuffer = ByteBuffer.allocate( inBuffer.remaining() + 1 );        
+			// outBuffer = ByteBuffer.allocate( inBuffer.remaining() + 3 );        
 
 			while (state != State.PROCESSING_REQUEST && inBuffer.hasRemaining() && request.length() < request.capacity()) {
 				char ch = (char) inBuffer.get();
@@ -158,11 +172,28 @@ public class ReadWriteHandler implements IReadWriteHandler {
         r.parseRequest(request.toString());
         Debug.DEBUG(r.toString(), DebugType.NONSERVER);
 
-        if (r.getReqMethod() == Request.ReqMethod.GET) {
-            Debug.DEBUG("method type GET", null);
-        } else if (r.getReqMethod() == Request.ReqMethod.POST) {
-            Debug.DEBUG("method type POST", null);
+        String url = r.getReqUrl();
+        // TODO: check url safety
+        File f = mapUrlToFile(url);
+
+        // determining Connection from headers
+        String protocol = r.getReqProtocol();
+        String conn = r.lookupHeader("Connection");
+        if (protocol.equals("HTTP/1.0")) {
+            // HTTP/1.0 default is close, need to specify to keep alive
+            keepalive = (conn != null && conn.equals("keep-alive"));
+        } else {
+            // HTTP/1.1+ default is keep-alive, need to specify close 
+            keepalive = (conn == null || !conn.equals("close"));
         }
+
+        if (r.getReqMethod() == Request.ReqMethod.GET) {
+            Debug.DEBUG("method type GET", DebugType.NONSERVER);
+        } else if (r.getReqMethod() == Request.ReqMethod.POST) {
+            Debug.DEBUG("method type POST", DebugType.NONSERVER);
+        }
+        Debug.DEBUG("protocol: " + protocol, DebugType.NONSERVER);
+        Debug.DEBUG("keep-alive: " + String.valueOf(keepalive), DebugType.NONSERVER);
 
         // Debug.DEBUG("req length: " + Integer.toString(request.length()), DebugType.NONSERVER);
 		// for (int i = 0; i < request.length(); i++) {
@@ -172,9 +203,87 @@ public class ReadWriteHandler implements IReadWriteHandler {
 
 		// 	outBuffer.put((byte) ch);
 		// }
-        // outBuffer.put((byte) '\n');
-		// outBuffer.flip();
-        // request.delete(0, request.length());
-		// state = State.SENDING_RESPONSE;
+
+        // Output response status line
+        // TODO: change to reflect correct status code and message
+        bufferWriteString(outBuffer, protocol + " 200 OK");
+
+        // Output date header
+        DateTimeFormatter dtf = DateTimeFormatter.ofPattern(("eee, dd MMM uuuu HH:mm:ss"));
+        ZonedDateTime now = ZonedDateTime.now();
+        ZonedDateTime gmtNow = now.withZoneSameInstant(ZoneId.of("GMT"));
+        bufferWriteString(outBuffer, "Date: " + dtf.format(gmtNow) + " GMT");
+
+        // Ouput server header
+        bufferWriteString(outBuffer, "Server: aPAXche/1.0.0 (Ubuntu)");
+
+        // Output last-modified header
+        ZonedDateTime fileModifiedTime = ZonedDateTime.ofInstant(Instant.ofEpochMilli(f.lastModified()), ZoneId.systemDefault());
+        ZonedDateTime fileModifiedGmtTime = fileModifiedTime.withZoneSameInstant(ZoneId.of("GMT"));
+        bufferWriteString(outBuffer, "Last-Modified: " + dtf.format(fileModifiedGmtTime) + " GMT");
+
+        // TODO: Output content-type header
+        bufferWriteString(outBuffer, "Content-Type: ");
+
+        // Output content-length header
+        bufferWriteString(outBuffer, "Content-Length: " + Integer.toString((int) f.length()));
+
+        // CRLF: End of headers, beginning of reponse body
+        outBuffer.put((byte) '\r');
+        outBuffer.put((byte) '\n');
+
+
+        // Output response body
+        if (f != null) {
+            outputResponseBody(f);
+        }
+
+        outBuffer.put((byte) '\r');
+        outBuffer.put((byte) '\n');
+		outBuffer.flip();
+        request.delete(0, request.length());
+		state = State.SENDING_RESPONSE;
 	} 
+
+    private File mapUrlToFile(String url) {
+        // ignore leading /
+        if (url.startsWith("/")) {
+            url = url.substring(1);
+        }
+
+        String fileName = url;
+
+        File f = new File(fileName);
+        if (!f.isFile()) {
+            // TODO: output error 404 not found
+            f = null;
+        }
+
+        return f;
+    }
+
+    private void outputResponseBody(File f) {
+        try {
+            FileInputStream fileInputStream = new FileInputStream(f);
+            int numBytes = (int) f.length();
+
+            for (int i = 0; i < numBytes; i++) {
+                responseBody.append((char) fileInputStream.read());
+            }
+
+            bufferWriteString(outBuffer, responseBody.toString());
+        } catch (IOException ex) {
+            // TODO
+        }
+        
+    }
+
+    // careful, could overwrite buf capacity
+    private static void bufferWriteString(ByteBuffer buf, String s) {
+        for (int i = 0; i < s.length(); i++) {
+            buf.put((byte) s.charAt(i));
+        }
+        buf.put((byte) '\r');
+        buf.put((byte) '\n');
+    }
 }

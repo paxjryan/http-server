@@ -2,4 +2,3 @@ GET / HTTP/1.1
 Host: www.google.com
 Connection: close
 
-asdf

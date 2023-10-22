@@ -48,7 +48,7 @@ public class Dispatcher implements Runnable {
                         if (key.isReadable()) {
                             rwh.handleRead(key);
                         }
-                        if (key.isWritable()) {
+                        else if (key.isWritable()) {
                             rwh.handleWrite(key);
                         }
                     }
