@@ -1,10 +1,13 @@
 import java.nio.channels.*;
 import java.net.*;
 import java.io.IOException;
+import java.io.File;
 
 public class Server {
-    public static int DEFAULT_PORT = 1223;
-    public static String DEFAULT_DOC_ROOT = "./www-root/";
+    public static final int DEFAULT_PORT = 1223;
+    public static final String DEFAULT_DOC_ROOT = "./www-root/";
+
+    public static ServerConfig serverConfig;
 
     public static ServerSocketChannel openServerSocketChannel(int port) {
         ServerSocketChannel serverSocketChannel = null;
@@ -32,13 +35,25 @@ public class Server {
 
         Dispatcher dispatcher = new Dispatcher();
 
-        // open port
-        int port;
-        try {
-            port = Integer.parseInt(args[0]);
-        } catch (Exception ex) {
-            port = DEFAULT_PORT;
+        int port = DEFAULT_PORT;
+
+        // open config file
+        // TODO: ask about this!!!
+        if (args.length > 0) {
+            File f = new File(args[0]);
+
+            if (!f.isFile()) {
+                System.out.println("Invalid server config");
+            } else {
+                ServerConfig sc = new ServerConfig();
+                try {
+                    sc.parseConfigFile(f);
+                    serverConfig = sc;
+                    port = serverConfig.getPort();
+                } catch (IOException ex) {}
+            }
         }
+
         ServerSocketChannel ssc = openServerSocketChannel(port);
 
         IReadWriteHandlerFactory rwhFactory = new ReadWriteHandlerFactory();
@@ -56,6 +71,6 @@ public class Server {
             System.exit(1);
         }
 
-        Debug.DEBUG(Integer.toString(port), DebugType.SERVER);
+        Debug.DEBUG("port" + Integer.toString(port), DebugType.SERVER);
     }
 }

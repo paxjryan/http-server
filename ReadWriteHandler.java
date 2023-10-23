@@ -312,6 +312,8 @@ public class ReadWriteHandler implements IReadWriteHandler {
 
     // url argument has not yet appended doc_root
     private File mapUrlToFile(String url) {
+        url = url.trim();
+        
         // ignore leading /
         if (url.startsWith("/")) {
             url = url.substring(1);
