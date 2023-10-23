@@ -5,7 +5,9 @@ Date    | Time      | Task
 10/19       4hrs        implemented keepalive; gitignore; began parsing structure
 10/19       3hrs        learned how to redirect input/output to telnet; finished basic parsing structure; debugging cmdline input/output redirection (still haven't fixed for output)
 10/21       3hrs        output response headers, including date; simplified parsing structure
-10/22       10am-       output response body; output response headers related to body
+10/22       3hrs        output response body; output response headers related to body; basic errors (404 Not Found)
+10/22       1hr         errors and content selection
+10/22       19:30-      content selection; if-modified-since; user-agent
 
 Note:
 http://localhost:1223/time.log

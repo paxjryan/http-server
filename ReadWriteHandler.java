@@ -12,14 +12,19 @@ import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 public class ReadWriteHandler implements IReadWriteHandler {
     private ByteBuffer inBuffer;
-    private ByteBuffer outBuffer;
+    private StringBuffer requestBuffer;
 
-    private StringBuffer request;
-    private StringBuffer responseBody;
+    private Request request;
     private boolean keepalive;
+    private String url;     // possibly modified during content selection; does not include doc_root
+
+    private ByteBuffer outBuffer;
+    private StringBuffer responseBody;
 
     private enum State {
         READING_REQUEST, 
@@ -31,13 +36,14 @@ public class ReadWriteHandler implements IReadWriteHandler {
 
     public ReadWriteHandler() {
         inBuffer = ByteBuffer.allocate(4096);
+        requestBuffer = new StringBuffer(4096);
+
+        keepalive = false;
+
         outBuffer = ByteBuffer.allocate(4096);
+        responseBody = new StringBuffer(4096);
 
         state = State.READING_REQUEST;
-
-        request = new StringBuffer(4096);
-        responseBody = new StringBuffer(4096);
-        keepalive = false;
     }
 
     public int getInitOps() {
@@ -145,15 +151,15 @@ public class ReadWriteHandler implements IReadWriteHandler {
 			inBuffer.flip(); // read input
 			// outBuffer = ByteBuffer.allocate( inBuffer.remaining() + 3 );        
 
-			while (state != State.PROCESSING_REQUEST && inBuffer.hasRemaining() && request.length() < request.capacity()) {
+			while (state != State.PROCESSING_REQUEST && inBuffer.hasRemaining() && requestBuffer.length() < requestBuffer.capacity()) {
 				char ch = (char) inBuffer.get();
 				Debug.DEBUG("Ch: " + String.valueOf(ch) + " (" + Integer.toString(ch) + ")", DebugType.NONSERVER);
-				request.append(ch);
+				requestBuffer.append(ch);
 
                 // "\n\r\n" (Windows) or "\r\r\n" (Mac) signal end of headers
-                if (request.length() >= 3 && 
-                        (request.substring(request.length() - 3).equals("\n\r\n") || 
-                        request.substring(request.length() - 3).equals("\r\r\n"))) {
+                if (requestBuffer.length() >= 3 && 
+                        (requestBuffer.substring(requestBuffer.length() - 3).equals("\n\r\n") || 
+                        requestBuffer.substring(requestBuffer.length() - 3).equals("\r\r\n"))) {
                     state = State.PROCESSING_REQUEST;
                     Debug.DEBUG("handleRead: find terminating chars", DebugType.NONSERVER);
                 }
@@ -168,45 +174,57 @@ public class ReadWriteHandler implements IReadWriteHandler {
 	}
 
 	private void generateResponse() throws IOException {
-        Request r = new Request();
-        r.parseRequest(request.toString());
-        Debug.DEBUG(r.toString(), DebugType.NONSERVER);
+        request = new Request();
+        request.parseRequest(requestBuffer.toString());
+        Debug.DEBUG(request.toString(), DebugType.NONSERVER);
 
-        String url = r.getReqUrl();
-        // TODO: check url safety
+        // determining Connection from headers and update keepalive variable
+        updateKeepAlive();
+
+        // if (request.getReqMethod() == Request.ReqMethod.GET) {
+        //     Debug.DEBUG("method type GET", DebugType.NONSERVER);
+        // } else if (request.getReqMethod() == Request.ReqMethod.POST) {
+        //     Debug.DEBUG("method type POST", DebugType.NONSERVER);
+        // }
+        // Debug.DEBUG("protocol: " + request.getReqProtocol(), DebugType.NONSERVER);
+        // Debug.DEBUG("keep-alive: " + String.valueOf(keepalive), DebugType.NONSERVER);
+
+        // Check url integrity for accesses above DEFAULT_DOC_ROOT
+        url = request.getReqUrl();
+        if (!checkUrlIntegrity()) {
+            keepalive = false;
+            generateResponse(400, "Bad Request", null);
+        }
+
+        // Perform content selection
+        performContentSelection();
+
+        // Map url to file; return 404 Not Found if not found
         File f = mapUrlToFile(url);
-
-        // determining Connection from headers
-        String protocol = r.getReqProtocol();
-        String conn = r.lookupHeader("Connection");
-        if (protocol.equals("HTTP/1.0")) {
-            // HTTP/1.0 default is close, need to specify to keep alive
-            keepalive = (conn != null && conn.equals("keep-alive"));
-        } else {
-            // HTTP/1.1+ default is keep-alive, need to specify close 
-            keepalive = (conn == null || !conn.equals("close"));
+        if (f == null) {
+            keepalive = false; // close connections with Not Found errors
+            generateResponse(404, "Not Found", f);
+            return;
         }
 
-        if (r.getReqMethod() == Request.ReqMethod.GET) {
-            Debug.DEBUG("method type GET", DebugType.NONSERVER);
-        } else if (r.getReqMethod() == Request.ReqMethod.POST) {
-            Debug.DEBUG("method type POST", DebugType.NONSERVER);
+        // if-modified-since
+        boolean modifiedSince = checkIfModifiedSince(f);
+        if (!modifiedSince) {
+            keepalive = false;
+            generateResponse(304, "Not Modified", null);
+            return;
         }
-        Debug.DEBUG("protocol: " + protocol, DebugType.NONSERVER);
-        Debug.DEBUG("keep-alive: " + String.valueOf(keepalive), DebugType.NONSERVER);
 
-        // Debug.DEBUG("req length: " + Integer.toString(request.length()), DebugType.NONSERVER);
-		// for (int i = 0; i < request.length(); i++) {
-		// 	char ch = (char) request.charAt(i);
+        generateResponse(200, "OK", f);
+	} 
 
-		// 	ch = Character.toUpperCase(ch);
+    private void generateResponse(int statusCode, String message, File f) {
+        if (statusCode == 404) {
+            f = mapUrlToFile("err_not_found.html");
+        } 
 
-		// 	outBuffer.put((byte) ch);
-		// }
-
-        // Output response status line
-        // TODO: change to reflect correct status code and message
-        bufferWriteString(outBuffer, protocol + " 200 OK");
+        // Output response status line with error status code and error message
+        bufferWriteString(outBuffer, request.getReqProtocol() + " " + Integer.toString(statusCode) + " " + message);
 
         // Output date header
         DateTimeFormatter dtf = DateTimeFormatter.ofPattern(("eee, dd MMM uuuu HH:mm:ss"));
@@ -217,49 +235,120 @@ public class ReadWriteHandler implements IReadWriteHandler {
         // Ouput server header
         bufferWriteString(outBuffer, "Server: aPAXche/1.0.0 (Ubuntu)");
 
-        // Output last-modified header
-        ZonedDateTime fileModifiedTime = ZonedDateTime.ofInstant(Instant.ofEpochMilli(f.lastModified()), ZoneId.systemDefault());
-        ZonedDateTime fileModifiedGmtTime = fileModifiedTime.withZoneSameInstant(ZoneId.of("GMT"));
-        bufferWriteString(outBuffer, "Last-Modified: " + dtf.format(fileModifiedGmtTime) + " GMT");
+        if (f != null) {
+            // Output last-modified header
 
-        // TODO: Output content-type header
-        bufferWriteString(outBuffer, "Content-Type: ");
+            ZonedDateTime fileModifiedTime = ZonedDateTime.ofInstant(Instant.ofEpochMilli(f.lastModified()), ZoneId.systemDefault());
+            ZonedDateTime fileModifiedGmtTime = fileModifiedTime.withZoneSameInstant(ZoneId.of("GMT"));
+            bufferWriteString(outBuffer, "Last-Modified: " + dtf.format(fileModifiedGmtTime) + " GMT");
 
-        // Output content-length header
-        bufferWriteString(outBuffer, "Content-Length: " + Integer.toString((int) f.length()));
+            // TODO: Output content-type header
+            String contentType = url.substring(url.lastIndexOf(".")+1);
+            if (contentType.equals("htm")) {
+                contentType = "html";
+            }
+            bufferWriteString(outBuffer, "Content-Type: text/" + contentType);
+
+            // Output content-length header
+            bufferWriteString(outBuffer, "Content-Length: " + Integer.toString((int) f.length()));
+        }
 
         // CRLF: End of headers, beginning of reponse body
         outBuffer.put((byte) '\r');
         outBuffer.put((byte) '\n');
 
-
         // Output response body
         if (f != null) {
             outputResponseBody(f);
+            outBuffer.put((byte) '\r');
+            outBuffer.put((byte) '\n');
         }
 
-        outBuffer.put((byte) '\r');
-        outBuffer.put((byte) '\n');
 		outBuffer.flip();
-        request.delete(0, request.length());
+        requestBuffer.delete(0, requestBuffer.length());
+        request = null;
 		state = State.SENDING_RESPONSE;
-	} 
+    }
 
+    private void updateKeepAlive() {
+        String conn = request.lookupHeader("Connection");
+        if (request.getReqProtocol().equals("HTTP/1.0")) {
+            // HTTP/1.0 default is close, need to specify to keep alive
+            keepalive = (conn != null && conn.equals("keep-alive"));
+        } else {
+            // HTTP/1.1+ default is keep-alive, need to specify close 
+            keepalive = (conn == null || !conn.equals("close"));
+        }
+    }
+
+    // The server should check the integrity of the URL in the request line
+    // A common attack of an HTTP sever is to send in a URL such as ../../file to fetch content outside of the document root
+    // TODO: Could extend this later; excluding all paths with ".." may exclude some legal paths
+    private boolean checkUrlIntegrity() {
+        return (url.indexOf("..") == -1);
+    }
+
+    private void performContentSelection() {
+        // If the request URL is for DocumentRoot (ii.e., empty URL) without specifying a file name and the User-Agent header 
+        // indicates that the request is from a mobile handset (e.g., it should at least detect iphone by detecting iPhone in 
+        // the User-Agent string), it should return index_m.html, if it exists; index.html next (fall-through), and then Not Found    
+        if (url.equals("/")) {
+            String userAgent = request.lookupHeader("User-Agent");
+            if (userAgent != null && userAgent.indexOf("iPhone") != -1) {
+                if (mapUrlToFile("/index_m.html") != null) {
+                    url = url + "index_m.html";
+                }
+            }
+        }
+
+        // If the URL ends with / without specifying a file name, the server should return index.html if it exists
+        // otherwise it will return Not Found
+        if (url.endsWith("/")) {
+            if (mapUrlToFile(url + "index.html") != null) {
+                url = url + "index.html";
+            }
+        }
+    }
+
+    // url argument has not yet appended doc_root
     private File mapUrlToFile(String url) {
         // ignore leading /
         if (url.startsWith("/")) {
             url = url.substring(1);
         }
 
-        String fileName = url;
+        // add doc_root
+        String docRootedUrl = Server.DEFAULT_DOC_ROOT + url;
 
+        String fileName = docRootedUrl;
         File f = new File(fileName);
         if (!f.isFile()) {
-            // TODO: output error 404 not found
-            f = null;
+            f = null;            
         }
 
         return f;
+    }
+
+    private boolean checkIfModifiedSince(File f) {
+        String ifModSinceStr = request.lookupHeader("If-Modified-Since");
+        if (ifModSinceStr != null) {
+            // removing "GMT"
+            ifModSinceStr = ifModSinceStr.substring(0, ifModSinceStr.length()-4);   
+
+            // get ZonedDateTime representation of if-modified-since time for comparison
+            DateTimeFormatter dtf = DateTimeFormatter.ofPattern(("eee, dd MMM uuuu HH:mm:ss"));
+            LocalDateTime localIfModSinceTime = LocalDateTime.parse(ifModSinceStr, dtf);
+            ZonedDateTime ifModSinceTime = localIfModSinceTime.atZone(ZoneId.of("GMT"));
+            Debug.DEBUG("modified time: " + ifModSinceTime.toString(), DebugType.NONSERVER);
+
+            // get ZonedDateTime representation of actual file last modified time for comparison
+            ZonedDateTime fileModifiedTime = ZonedDateTime.ofInstant(Instant.ofEpochMilli(f.lastModified()), ZoneId.systemDefault());
+            ZonedDateTime fileModifiedGmtTime = fileModifiedTime.withZoneSameInstant(ZoneId.of("GMT"));
+
+            // TODO: if file was not modified after required time
+            return fileModifiedTime.isAfter(ifModSinceTime);
+        }
+        return true;
     }
 
     private void outputResponseBody(File f) {

@@ -4,6 +4,7 @@ import java.io.IOException;
 
 public class Server {
     public static int DEFAULT_PORT = 1223;
+    public static String DEFAULT_DOC_ROOT = "./www-root/";
 
     public static ServerSocketChannel openServerSocketChannel(int port) {
         ServerSocketChannel serverSocketChannel = null;
