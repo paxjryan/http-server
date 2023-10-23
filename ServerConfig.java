@@ -36,24 +36,6 @@ public class ServerConfig {
         return firstVirtualHost;
     }
 
-    // public String toString() {
-    //     String str = "";
-
-    //     str += "Method: ";
-    //     if (reqMethod == ReqMethod.GET) str += "GET\n";
-    //     else if (reqMethod == ReqMethod.POST) str += "POST\n";
-    //     str += url + "\n\n";
-
-    //     str += "Headers:\n";
-
-    //     for (Map.Entry<String, String> set : requestHeaders.entrySet()) {
-    //         str += set.getKey() + ": ";
-    //         str += set.getValue() + "\n";
-    //     }
-
-    //     return str;
-    // }
-
     public void parseConfigFile(File f) throws IOException {
         BufferedReader reader = new BufferedReader(new FileReader(f));
 

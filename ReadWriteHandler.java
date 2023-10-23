@@ -243,11 +243,20 @@ public class ReadWriteHandler implements IReadWriteHandler {
             bufferWriteString(outBuffer, "Last-Modified: " + dtf.format(fileModifiedGmtTime) + " GMT");
 
             // TODO: Output content-type header
-            String contentType = url.substring(url.lastIndexOf(".")+1);
-            if (contentType.equals("htm")) {
-                contentType = "html";
+            String fileType = url.substring(url.lastIndexOf(".")+1);
+            String contentType;
+            switch (fileType) {
+                case "html":
+                case "htm":
+                    contentType = "text/html"; break;
+                case "jpg":
+                    contentType = "image/jpeg"; break;
+                case "gif":
+                    contentType = "image/gif"; break;
+                default:
+                    contentType = "text/plain"; break;
             }
-            bufferWriteString(outBuffer, "Content-Type: text/" + contentType);
+            bufferWriteString(outBuffer, "Content-Type: " + contentType);
 
             // Output content-length header
             bufferWriteString(outBuffer, "Content-Length: " + Integer.toString((int) f.length()));

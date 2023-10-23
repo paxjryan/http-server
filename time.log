@@ -5,10 +5,12 @@ Date    | Time      | Task
 10/19       4hrs        implemented keepalive; gitignore; began parsing structure
 10/19       3hrs        learned how to redirect input/output to telnet; finished basic parsing structure; debugging cmdline input/output redirection (still haven't fixed for output)
 10/21       3hrs        output response headers, including date; simplified parsing structure
-10/22       3hrs        output response body; output response headers related to body; basic errors (404 Not Found)
+10/22       3hrs        output response body; output response headers related to body; basic errors (ie 404 Not Found)
 10/22       1hr         errors and content selection
 10/22       2hrs30      content selection; if-modified-since; user-agent; begin server config
-10/22       1hr45       server config
+10/22       2hrs        server config
 
 Note:
 http://localhost:1223/time.log
+
+TODO: something weird is going on with images
