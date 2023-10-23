@@ -13,14 +13,15 @@ public class Server {
     // if serverConfig but no serverName specified, return first virtual host doc root
     // if serverConfig and serverName specified, attempt to return serverName doc root
 
-    // returns docroot associated with serverName in serverConfig
+    // returns docroot associated with serverName in serverConfig, 
+    // or default doc root if no config or config does not contain serverName 
     public static String getVirtualHostDocRoot(String serverName) {
         if (serverConfig == null) {
-            // TODO: throw error; this overloaded method should not be called if there's no server config
+            return DEFAULT_DOC_ROOT;
         }
         String docRoot = serverConfig.lookupVirtualHost(serverName);
         if (docRoot == null) {
-           // TODO: throw lookup error
+            return DEFAULT_DOC_ROOT;
         }
         return docRoot;
     }

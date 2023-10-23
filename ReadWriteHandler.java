@@ -1,19 +1,22 @@
 // Code modified from https://zoo.cs.yale.edu/classes/cs434/cs434-2023-fall/assignments/programming-proj1/examples/SelectServer/EchoLineReadWriteHandler.java
 
-import java.nio.*;
-import java.nio.channels.*;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.nio.*;
+import java.nio.channels.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
+
 // for response header Date
-import java.time.ZoneId;
-import java.time.ZoneOffset;
-import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 
 public class ReadWriteHandler implements IReadWriteHandler {
     private ByteBuffer inBuffer;
@@ -41,7 +44,7 @@ public class ReadWriteHandler implements IReadWriteHandler {
         keepalive = false;
 
         outBuffer = ByteBuffer.allocate(4096);
-        responseBody = new StringBuffer(4096);
+        // responseBody = new StringBuffer(4096);
 
         state = State.READING_REQUEST;
     }
@@ -148,8 +151,8 @@ public class ReadWriteHandler implements IReadWriteHandler {
 			state = State.SENDING_RESPONSE;
 			Debug.DEBUG("handleRead: readBytes == -1", DebugType.NONSERVER);
 		} else {
+            // TODO: throw 413 Entity Too Large if buffer overflow
 			inBuffer.flip(); // read input
-			// outBuffer = ByteBuffer.allocate( inBuffer.remaining() + 3 );        
 
 			while (state != State.PROCESSING_REQUEST && inBuffer.hasRemaining() && requestBuffer.length() < requestBuffer.capacity()) {
 				char ch = (char) inBuffer.get();
@@ -176,18 +179,10 @@ public class ReadWriteHandler implements IReadWriteHandler {
 	private void generateResponse() throws IOException {
         request = new Request();
         request.parseRequest(requestBuffer.toString());
-        Debug.DEBUG(request.toString(), DebugType.NONSERVER);
+        // Debug.DEBUG(request.toString(), DebugType.NONSERVER);
 
         // determining Connection from headers and update keepalive variable
         updateKeepAlive();
-
-        // if (request.getReqMethod() == Request.ReqMethod.GET) {
-        //     Debug.DEBUG("method type GET", DebugType.NONSERVER);
-        // } else if (request.getReqMethod() == Request.ReqMethod.POST) {
-        //     Debug.DEBUG("method type POST", DebugType.NONSERVER);
-        // }
-        // Debug.DEBUG("protocol: " + request.getReqProtocol(), DebugType.NONSERVER);
-        // Debug.DEBUG("keep-alive: " + String.valueOf(keepalive), DebugType.NONSERVER);
 
         // Check url integrity for accesses above doc root
         url = request.getReqUrl();
@@ -200,7 +195,7 @@ public class ReadWriteHandler implements IReadWriteHandler {
         performContentSelection();
 
         // Map url to file; return 404 Not Found if not found
-        File f = mapUrlToFile(url);
+        File f = mapUrlToFile();
         if (f == null) {
             keepalive = false; // close connections with Not Found errors
             generateResponse(404, "Not Found", f);
@@ -220,8 +215,15 @@ public class ReadWriteHandler implements IReadWriteHandler {
 
     private void generateResponse(int statusCode, String message, File f) {
         if (statusCode == 404) {
-            f = mapUrlToFile("err_not_found.html");
+            url = "err_not_found.html";
+            f = mapUrlToFile();
         } 
+
+        // Determine outBuffer size and allocate
+        // Use 4K as max headers size: https://stackoverflow.com/questions/686217/maximum-on-http-header-values
+        int headersSize = 4096;
+        int numBytes = (int) f.length();
+        outBuffer = ByteBuffer.allocate(headersSize + numBytes);
 
         // Output response status line with error status code and error message
         bufferWriteString(outBuffer, request.getReqProtocol() + " " + Integer.toString(statusCode) + " " + message);
@@ -242,20 +244,25 @@ public class ReadWriteHandler implements IReadWriteHandler {
             ZonedDateTime fileModifiedGmtTime = fileModifiedTime.withZoneSameInstant(ZoneId.of("GMT"));
             bufferWriteString(outBuffer, "Last-Modified: " + dtf.format(fileModifiedGmtTime) + " GMT");
 
-            // TODO: Output content-type header
+            // Output content-type header
             String fileType = url.substring(url.lastIndexOf(".")+1);
-            String contentType;
-            switch (fileType) {
-                case "html":
-                case "htm":
-                    contentType = "text/html"; break;
-                case "jpg":
-                    contentType = "image/jpeg"; break;
-                case "gif":
-                    contentType = "image/gif"; break;
-                default:
-                    contentType = "text/plain"; break;
-            }
+            String contentType = "";
+
+            try {
+                contentType = Files.probeContentType(f.toPath());
+            } catch (IOException ex) {}
+
+            // switch (fileType) {
+            //     case "html":
+            //     case "htm":
+            //         contentType = "text/html"; break;
+            //     case "jpg":
+            //         contentType = "image/jpeg"; break;
+            //     case "gif":
+            //         contentType = "image/gif"; break;
+            //     default:
+            //         contentType = "text/plain"; break;
+            // }
             bufferWriteString(outBuffer, "Content-Type: " + contentType);
 
             // Output content-length header
@@ -320,7 +327,11 @@ public class ReadWriteHandler implements IReadWriteHandler {
     }
 
     // url argument has not yet appended doc_root
-    // use 
+    private File mapUrlToFile() {
+        return mapUrlToFile(url);
+    }
+
+    // url argument has not yet appended doc_root
     private File mapUrlToFile(String url) {
         // url: ignore leading /
         if (url.startsWith("/")) {
@@ -383,13 +394,15 @@ public class ReadWriteHandler implements IReadWriteHandler {
     private void outputResponseBody(File f) {
         try {
             FileInputStream fileInputStream = new FileInputStream(f);
-            int numBytes = (int) f.length();
+            byte[] allBytes = fileInputStream.readAllBytes();
 
-            for (int i = 0; i < numBytes; i++) {
-                responseBody.append((char) fileInputStream.read());
-            }
+            outBuffer.put(allBytes);
 
-            bufferWriteString(outBuffer, responseBody.toString());
+            // for (int i = 0; i < numBytes; i++) {
+            //     responseBody.append((char) fileInputStream.read());
+            // }
+
+            // bufferWriteString(outBuffer, responseBody.toString());
         } catch (IOException ex) {
             // TODO
         }

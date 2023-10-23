@@ -9,8 +9,9 @@ Date    | Time      | Task
 10/22       1hr         errors and content selection
 10/22       2hrs30      content selection; if-modified-since; user-agent; begin server config
 10/22       2hrs        server config
+10/23       1hr30       fixed output bug which assumed all output was text; changed content-type to use library dictionary; now works with netcat and Chrome
 
 Note:
 http://localhost:1223/time.log
 
-TODO: something weird is going on with images
+nc -C localhost 1223 < testreq.txt

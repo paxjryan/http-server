@@ -1,1 +1,55 @@
-hey 
+-- GOOD --
+Parsing req method: GET
+Parsing req url: /
+Parsing req protocol: HTTP/1.1
+Parsing header: Host, val: www.google.com
+Parsing header: Connection, val: close
+attempting lookup of key Connection
+attempting lookup of key User-Agent
+attempting lookup of key Host
+hostname: www.google.com
+hostname != null (path 1)
+full url requested: ./www-root/index.html
+attempting lookup of key Host
+hostname: www.google.com
+hostname != null (path 1)
+full url requested: ./www-root/index.html
+attempting lookup of key If-Modified-Since
+updating selector state ...
+New state: writing -> -Read +Write
+Enter select loop
+ReadWriteHandler: data ready to be written
+handleWrite: Write data to connection java.nio.channels.SocketChannel[connected local=/127.0.0.1:1223 remote=/127.0.0.1:49190]; from buffer java.nio.HeapByteBuffer[pos=0 lim=1434 cap=5347]
+handleWrite: write 1434 bytes; after write java.nio.HeapByteBuffer[pos=1434 lim=1434 cap=5347]
+handleWrite: response sent
+updating selector state ...
+Connection closed; shutdown
+Enter select loop
+
+-- BAD --
+Parsing req method: GET
+Parsing req url: /
+Parsing req protocol: HTTP/1.1
+Parsing header: Host, val: www.google.com
+Parsing header: Connection, val: close
+attempting lookup of key Connection
+attempting lookup of key User-Agent
+attempting lookup of key Host
+hostname: www.google.com
+hostname != null (path 1)
+full url requested: ./www-root/index.html
+attempting lookup of key Host
+hostname: www.google.com
+hostname != null (path 1)
+full url requested: ./www-root/index.html
+attempting lookup of key If-Modified-Since
+updating selector state ...
+New state: writing -> -Read +Write
+Enter select loop
+ReadWriteHandler: data ready to be written
+handleWrite: Write data to connection java.nio.channels.SocketChannel[connected local=/127.0.0.1:1223 remote=/127.0.0.1:49188]; from buffer java.nio.HeapByteBuffer[pos=0 lim=1434 cap=5347]
+handleWrite: write 1434 bytes; after write java.nio.HeapByteBuffer[pos=1434 lim=1434 cap=5347]
+handleWrite: response sent
+updating selector state ...
+Connection closed; shutdown
+Enter select loop
