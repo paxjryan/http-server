@@ -3,6 +3,7 @@
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.net.Authenticator.RequestorType;
 import java.nio.*;
 import java.nio.channels.*;
 import java.nio.file.Files;
@@ -156,7 +157,7 @@ public class ReadWriteHandler implements IReadWriteHandler {
 
 			while (state != State.PROCESSING_REQUEST && inBuffer.hasRemaining() && requestBuffer.length() < requestBuffer.capacity()) {
 				char ch = (char) inBuffer.get();
-				Debug.DEBUG("Ch: " + String.valueOf(ch) + " (" + Integer.toString(ch) + ")", DebugType.NONSERVER);
+				// Debug.DEBUG("Ch: " + String.valueOf(ch) + " (" + Integer.toString(ch) + ")", DebugType.NONSERVER);
 				requestBuffer.append(ch);
 
                 // "\n\r\n" (Windows) or "\r\r\n" (Mac) signal end of headers
@@ -202,12 +203,20 @@ public class ReadWriteHandler implements IReadWriteHandler {
             return;
         }
 
-        // if-modified-since
+        // if-modified-since; return 304 Not Modified if not modified since
         boolean modifiedSince = checkIfModifiedSince(f);
         if (!modifiedSince) {
             keepalive = false;
             generateResponse(304, "Not Modified", null);
             return;
+        }
+
+        // accept; return 406 Not Acceptable if content type not found in accept header
+        boolean accepted = checkIfAccepted(f);
+        if (!accepted) {
+                Debug.DEBUG("406 error", DebugType.NONSERVER);
+                generateResponse(406, "Not Acceptable", null);
+                return;
         }
 
         generateResponse(200, "OK", f);
@@ -222,7 +231,10 @@ public class ReadWriteHandler implements IReadWriteHandler {
         // Determine outBuffer size and allocate
         // Use 4K as max headers size: https://stackoverflow.com/questions/686217/maximum-on-http-header-values
         int headersSize = 4096;
-        int numBytes = (int) f.length();
+        int numBytes = 0;
+        if (f != null) {
+            numBytes = (int) f.length();
+        }
         outBuffer = ByteBuffer.allocate(headersSize + numBytes);
 
         // Output response status line with error status code and error message
@@ -344,10 +356,10 @@ public class ReadWriteHandler implements IReadWriteHandler {
         String docRoot;
         if (hostname != null) {
             docRoot = Server.getVirtualHostDocRoot(hostname);
-            Debug.DEBUG("hostname != null (path 1)", DebugType.NONSERVER);
+            // Debug.DEBUG("hostname != null (path 1)", DebugType.NONSERVER);
         } else {
             docRoot = Server.getVirtualHostDocRoot();
-            Debug.DEBUG("hostname == null (path 2)", DebugType.NONSERVER);
+            // Debug.DEBUG("hostname == null (path 2)", DebugType.NONSERVER);
         }
 
         // doc root: ignore leading /
@@ -389,6 +401,25 @@ public class ReadWriteHandler implements IReadWriteHandler {
             return fileModifiedTime.isAfter(ifModSinceTime);
         }
         return true;
+    }
+
+    private boolean checkIfAccepted(File f) {
+        String acceptTypeStr = request.lookupHeader("Accept");
+        if (acceptTypeStr != null) {
+            String[] acceptTypes = acceptTypeStr.split(",");
+            String contentType = "";
+            try {
+                contentType = Files.probeContentType(f.toPath());
+            } catch (IOException ex) {}
+
+            for (int i = 0; i < acceptTypes.length; i++) {
+                if (acceptTypes[i].trim().equals(contentType) || acceptTypes[i].indexOf("*/*") != -1) {
+                    return true;
+                }
+            }
+            return false;
+        }      
+        return true; 
     }
 
     private void outputResponseBody(File f) {

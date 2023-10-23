@@ -9,24 +9,23 @@ public class Server {
 
     private static ServerConfig serverConfig;
 
-    // if no serverConfig, return DEFAULT_DOC_ROOT
-    // if serverConfig but no serverName specified, return first virtual host doc root
-    // if serverConfig and serverName specified, attempt to return serverName doc root
-
     // returns docroot associated with serverName in serverConfig, 
-    // or default doc root if no config or config does not contain serverName 
+    // or default doc root if no config,
+    // or first configured server's doc root if serverName not in config
     public static String getVirtualHostDocRoot(String serverName) {
         if (serverConfig == null) {
             return DEFAULT_DOC_ROOT;
         }
         String docRoot = serverConfig.lookupVirtualHost(serverName);
+        // 
         if (docRoot == null) {
-            return DEFAULT_DOC_ROOT;
+            return getVirtualHostDocRoot();
         }
         return docRoot;
     }
 
-    // returns docroot associated with first server in serverConfig
+    // returns docroot associated with first server in serverConfig,
+    // or default doc root if no config
     public static String getVirtualHostDocRoot() {
         if (serverConfig == null) {
             return DEFAULT_DOC_ROOT;
@@ -67,7 +66,7 @@ public class Server {
         int port = DEFAULT_PORT;
 
         // open config file
-        // TODO: ask about this!!!
+        // TODO: ASSUMES CONFIG FILE IS FIRST COMMAND-LINE ARGUMENT
         if (args.length > 0) {
             File f = new File(args[0]);
 

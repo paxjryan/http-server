@@ -1,55 +1,35 @@
--- GOOD --
-Parsing req method: GET
-Parsing req url: /
-Parsing req protocol: HTTP/1.1
-Parsing header: Host, val: www.google.com
-Parsing header: Connection, val: close
-attempting lookup of key Connection
-attempting lookup of key User-Agent
-attempting lookup of key Host
-hostname: www.google.com
-hostname != null (path 1)
-full url requested: ./www-root/index.html
-attempting lookup of key Host
-hostname: www.google.com
-hostname != null (path 1)
-full url requested: ./www-root/index.html
-attempting lookup of key If-Modified-Since
-updating selector state ...
-New state: writing -> -Read +Write
-Enter select loop
-ReadWriteHandler: data ready to be written
-handleWrite: Write data to connection java.nio.channels.SocketChannel[connected local=/127.0.0.1:1223 remote=/127.0.0.1:49190]; from buffer java.nio.HeapByteBuffer[pos=0 lim=1434 cap=5347]
-handleWrite: write 1434 bytes; after write java.nio.HeapByteBuffer[pos=1434 lim=1434 cap=5347]
-handleWrite: response sent
-updating selector state ...
-Connection closed; shutdown
-Enter select loop
+HTTP/1.1 200 OK
+Date: Mon, 23 Oct 2023 20:16:13 GMT
+Server: aPAXche/1.0.0 (Ubuntu)
+Last-Modified: Sun, 22 Oct 2023 16:06:12 GMT
+Content-Type: text/html
+Content-Length: 1251
 
--- BAD --
-Parsing req method: GET
-Parsing req url: /
-Parsing req protocol: HTTP/1.1
-Parsing header: Host, val: www.google.com
-Parsing header: Connection, val: close
-attempting lookup of key Connection
-attempting lookup of key User-Agent
-attempting lookup of key Host
-hostname: www.google.com
-hostname != null (path 1)
-full url requested: ./www-root/index.html
-attempting lookup of key Host
-hostname: www.google.com
-hostname != null (path 1)
-full url requested: ./www-root/index.html
-attempting lookup of key If-Modified-Since
-updating selector state ...
-New state: writing -> -Read +Write
-Enter select loop
-ReadWriteHandler: data ready to be written
-handleWrite: Write data to connection java.nio.channels.SocketChannel[connected local=/127.0.0.1:1223 remote=/127.0.0.1:49188]; from buffer java.nio.HeapByteBuffer[pos=0 lim=1434 cap=5347]
-handleWrite: write 1434 bytes; after write java.nio.HeapByteBuffer[pos=1434 lim=1434 cap=5347]
-handleWrite: response sent
-updating selector state ...
-Connection closed; shutdown
-Enter select loop
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"></head><body>.This is one reference book.<p>&nbsp;<img border="0" src="./index_files/jnp3rd.jpg" width="504" height="661">
+</p>
+</body><div id="simplifyJobsContainer" style="position: absolute; top: 0px; left: 0px; width: 0px; height: 0px; overflow: visible; z-index: 2147483647;"><span><template shadowrootmode="open"><link rel="stylesheet" href="chrome-extension://pbanhockgagggenencehbnadejlgchfc/css/styles.css"><style>
+  :host {
+    all: initial;
+    line-height: 1.5;
+    -webkit-text-size-adjust: 100%;
+    -moz-tab-size: 4;
+    -o-tab-size: 4;
+    tab-size: 4;
+    font-family: Palanquin, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(203, 213, 225, 1) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 6px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: rgba(203, 213, 225, 1);
+    border-radius: 3px;
+    border: 0;
+  }
+</style></template></span></div></html>
