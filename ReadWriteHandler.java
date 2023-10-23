@@ -21,7 +21,7 @@ public class ReadWriteHandler implements IReadWriteHandler {
 
     private Request request;
     private boolean keepalive;
-    private String url;     // possibly modified during content selection; does not include doc_root
+    private String url;         // possibly modified during content selection; does not include doc_root
 
     private ByteBuffer outBuffer;
     private StringBuffer responseBody;
@@ -189,7 +189,7 @@ public class ReadWriteHandler implements IReadWriteHandler {
         // Debug.DEBUG("protocol: " + request.getReqProtocol(), DebugType.NONSERVER);
         // Debug.DEBUG("keep-alive: " + String.valueOf(keepalive), DebugType.NONSERVER);
 
-        // Check url integrity for accesses above DEFAULT_DOC_ROOT
+        // Check url integrity for accesses above doc root
         url = request.getReqUrl();
         if (!checkUrlIntegrity()) {
             keepalive = false;
@@ -311,21 +311,39 @@ public class ReadWriteHandler implements IReadWriteHandler {
     }
 
     // url argument has not yet appended doc_root
+    // use 
     private File mapUrlToFile(String url) {
-        url = url.trim();
-        
-        // ignore leading /
+        // url: ignore leading /
         if (url.startsWith("/")) {
             url = url.substring(1);
         }
 
-        // add doc_root
-        String docRootedUrl = Server.DEFAULT_DOC_ROOT + url;
+        // get docRoot
+        String hostname = request.lookupHeader("Host");
+        Debug.DEBUG("hostname: " + hostname, DebugType.NONSERVER);
+        String docRoot;
+        if (hostname != null) {
+            docRoot = Server.getVirtualHostDocRoot(hostname);
+            Debug.DEBUG("hostname != null (path 1)", DebugType.NONSERVER);
+        } else {
+            docRoot = Server.getVirtualHostDocRoot();
+            Debug.DEBUG("hostname == null (path 2)", DebugType.NONSERVER);
+        }
+
+        // doc root: ignore leading /
+        if (docRoot.startsWith("/")) {
+            docRoot = docRoot.substring(1);
+        }
+
+        // add doc root to url
+        String docRootedUrl = docRoot + url;
+        Debug.DEBUG("full url requested: " + docRootedUrl, DebugType.NONSERVER);
 
         String fileName = docRootedUrl;
         File f = new File(fileName);
         if (!f.isFile()) {
-            f = null;            
+            f = null; 
+            Debug.DEBUG("couldn't find file " + fileName, DebugType.NONSERVER);           
         }
 
         return f;

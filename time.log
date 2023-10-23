@@ -8,7 +8,7 @@ Date    | Time      | Task
 10/22       3hrs        output response body; output response headers related to body; basic errors (404 Not Found)
 10/22       1hr         errors and content selection
 10/22       2hrs30      content selection; if-modified-since; user-agent; begin server config
-10/22       11:20-      server config
+10/22       1hr45       server config
 
 Note:
 http://localhost:1223/time.log

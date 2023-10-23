@@ -32,6 +32,10 @@ public class ServerConfig {
         return virtualHosts.get(serverName);
     }
 
+    public String getFirstVirtualHost() {
+        return firstVirtualHost;
+    }
+
     // public String toString() {
     //     String str = "";
 

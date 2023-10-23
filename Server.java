@@ -7,7 +7,35 @@ public class Server {
     public static final int DEFAULT_PORT = 1223;
     public static final String DEFAULT_DOC_ROOT = "./www-root/";
 
-    public static ServerConfig serverConfig;
+    private static ServerConfig serverConfig;
+
+    // if no serverConfig, return DEFAULT_DOC_ROOT
+    // if serverConfig but no serverName specified, return first virtual host doc root
+    // if serverConfig and serverName specified, attempt to return serverName doc root
+
+    // returns docroot associated with serverName in serverConfig
+    public static String getVirtualHostDocRoot(String serverName) {
+        if (serverConfig == null) {
+            // TODO: throw error; this overloaded method should not be called if there's no server config
+        }
+        String docRoot = serverConfig.lookupVirtualHost(serverName);
+        if (docRoot == null) {
+           // TODO: throw lookup error
+        }
+        return docRoot;
+    }
+
+    // returns docroot associated with first server in serverConfig
+    public static String getVirtualHostDocRoot() {
+        if (serverConfig == null) {
+            return DEFAULT_DOC_ROOT;
+        }
+        String firstServerName = serverConfig.getFirstVirtualHost();
+        if (firstServerName == null) {
+            // TODO: throw lookup error
+        }
+        return serverConfig.lookupVirtualHost(firstServerName);
+    }
 
     public static ServerSocketChannel openServerSocketChannel(int port) {
         ServerSocketChannel serverSocketChannel = null;
