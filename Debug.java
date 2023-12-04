@@ -21,4 +21,8 @@ public class Debug {
             }
         }
     }
+
+    public static void PRINT(String s) {
+        System.out.println(s);
+    }
 }

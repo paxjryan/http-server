@@ -17,10 +17,6 @@ import java.io.StringReader;
 // connectionType = r.lookupHeader("conn");
 
 public class Request {
-    public enum ReqMethod {
-        GET,
-        POST
-    }
     // request method line
     private ReqMethod reqMethod;
     private String url;
@@ -70,23 +66,30 @@ public class Request {
         return str;
     }
 
-    public void parseRequest(String req) throws IOException {
+    public boolean parseRequest(String req) throws IOException {
         BufferedReader reader = new BufferedReader(new StringReader(req));
 
-        parseRequestLine(reader.readLine());
+        if ( !parseRequestLine(reader.readLine()) ) {
+            return false;
+        }
 
         String header = reader.readLine();
-        while (header.length() > 0) {
-            parseHeaderLine(header);
+        while (header != null && header.length() > 0) {
+            if ( !parseHeaderLine(header) ) {
+                return false;
+            }
             header = reader.readLine();
         }
+        
+        return true;
     }
 
-    private void parseRequestLine(String reqLine) { //throws RequestFormatException {
+    // returns false for improperly formatted request line
+    private boolean parseRequestLine(String reqLine) {
         String[] request = reqLine.split("\\s");
 
-        if (request.length < 3) {
-            // TODO: throw req parsing error
+        if (request.length != 3) {
+            return false;
         }
 
         if (request[0].equals("GET")) {
@@ -96,25 +99,30 @@ public class Request {
             reqMethod = ReqMethod.POST;
             Debug.DEBUG("Parsing req method: POST", DebugType.PARSING);
         } else {
-            // throw req parsing error
-            Debug.DEBUG("Parsing req method error", DebugType.PARSING);
+            reqMethod = ReqMethod.UNKNOWN;
+            Debug.DEBUG("Parsing req method error: unknown request method", DebugType.PARSING);
         }
         
-        // non-safe url, need to check for validity elsewhere
+        // non-safe url, check for validity in readWriteHandler.checkUrlIntegrity()
         url = request[1];
         protocol = request[2];
 
         Debug.DEBUG("Parsing req url: " + url, DebugType.PARSING);
         Debug.DEBUG("Parsing req protocol: " + protocol, DebugType.PARSING);
+
+        return true;
     }
 
-    private void parseHeaderLine(String headerLine) { //throws RequestFormatException {
+    // returns false for improperly formatted header line
+    private boolean parseHeaderLine(String headerLine) { 
         String[] header = headerLine.split(": ");
         if (header.length < 2) {
-            // TODO: throw header parsing error
+            return false;
         }
         
         requestHeaders.put(header[0], header[1]);
         Debug.DEBUG("Parsing header: " + header[0] + ", val: " + header[1], DebugType.PARSING);
+
+        return true;
     }
 }

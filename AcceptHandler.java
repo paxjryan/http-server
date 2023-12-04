@@ -1,11 +1,14 @@
 import java.nio.channels.*;
 import java.io.IOException;
+import java.util.concurrent.locks.*;
 
 public class AcceptHandler implements IAcceptHandler {
     private IReadWriteHandlerFactory rwhf;
+    private Lock lock;
 
-    public AcceptHandler(IReadWriteHandlerFactory rwhf) {
+    public AcceptHandler(IReadWriteHandlerFactory rwhf, Lock lock) {
         this.rwhf = rwhf;
+        this.lock = lock;
     }
 
     public void handleException() {
@@ -15,15 +18,26 @@ public class AcceptHandler implements IAcceptHandler {
     public void handleAccept(SelectionKey key) throws IOException {
         ServerSocketChannel server = (ServerSocketChannel) key.channel();
 
-        SocketChannel client = server.accept();
-        Debug.DEBUG("AcceptHandler: accepted connection from " + client, DebugType.NONSERVER);
+        try {
+            lock.lock();
 
-        client.configureBlocking(false);
+            SocketChannel client = server.accept();
 
-        IReadWriteHandler rwh = rwhf.createHandler();
-        int ops = rwh.getInitOps();
+            if (client != null) {
+                Debug.DEBUG("AcceptHandler: accepted connection from " + client, DebugType.NONSERVER);
 
-        SelectionKey clientKey = client.register(key.selector(), ops);
-        clientKey.attach(rwh);
+                client.configureBlocking(false);
+
+                IReadWriteHandler rwh = rwhf.createHandler();
+                int ops = rwh.getInitOps();
+
+                SelectionKey clientKey = client.register(key.selector(), ops);
+                clientKey.attach(rwh);
+            } else {
+                Debug.DEBUG("AcceptHandler: null client", DebugType.NONSERVER);
+            }
+        } finally {
+            lock.unlock();
+        }
     }
 }

@@ -2,13 +2,23 @@ import java.nio.channels.*;
 import java.net.*;
 import java.io.IOException;
 import java.io.File;
+import java.util.*;
+import java.util.concurrent.locks.*;
+
+// Note: finished. Also move the static methods sometime soon
 
 public class Server {
     public static final int DEFAULT_PORT = 1223;
     public static final String DEFAULT_DOC_ROOT = "./www-root/";
 
     private static ServerConfig serverConfig;
+    private static Selector selector;
 
+    public static int getPort() {
+        return serverConfig.getPort();
+    }
+
+    // TODO: move static method to ServerConfig?
     // returns docroot associated with serverName in serverConfig, 
     // or default doc root if no config,
     // or first configured server's doc root if serverName not in config
@@ -24,6 +34,7 @@ public class Server {
         return docRoot;
     }
 
+    // TODO: move static method to ServerConfig?
     // returns docroot associated with first server in serverConfig,
     // or default doc root if no config
     public static String getVirtualHostDocRoot() {
@@ -49,7 +60,7 @@ public class Server {
             // non-blocking channel
             serverSocketChannel.configureBlocking(false);
 
-            Debug.DEBUG("Server listening on port " + Integer.toString(port), DebugType.SERVER);
+            Debug.PRINT("Server listening on port " + Integer.toString(port));
         } catch (IOException ex) {
             ex.printStackTrace();
             System.exit(1);
@@ -59,46 +70,75 @@ public class Server {
     }
 
     public static void main(String[] args) {
-        Debug.DEBUG("Starting server", DebugType.SERVER_VERBOSE);
+        Debug.PRINT("Starting server");
 
-        Dispatcher dispatcher = new Dispatcher();
+        try {
+            selector = Selector.open();
+        } catch (IOException ex) {
+            System.out.println("Cannot create selector");
+            ex.printStackTrace();
+            System.exit(1);
+        }    
 
         int port = DEFAULT_PORT;
+        int nSelectLoops = 1;
 
         // open config file
         // TODO: ASSUMES CONFIG FILE IS FIRST COMMAND-LINE ARGUMENT
         if (args.length > 0) {
-            File f = new File(args[0]);
+            if (args.length != 2 || (!args[0].equals("-c") && !args[0].equals("-config"))) {
+                System.out.println("Usage: java server [-c|-config] <config_file_name>");
+                return;
+            }
+
+            File f = new File(args[1]);
 
             if (!f.isFile()) {
-                System.out.println("Invalid server config");
+                System.out.println("Could not find server config file " + args[0] + "; using default configuration");
             } else {
                 ServerConfig sc = new ServerConfig();
                 try {
                     sc.parseConfigFile(f);
                     serverConfig = sc;
                     port = serverConfig.getPort();
-                } catch (IOException ex) {}
+                    nSelectLoops = serverConfig.getNSelectLoops();
+                } catch (IOException ex) {
+                    // TODO: throw server config file parsing error
+                    System.out.println("Server config file parsing error");
+                    System.exit(1);
+                }
             }
         }
 
         ServerSocketChannel ssc = openServerSocketChannel(port);
 
-        IReadWriteHandlerFactory rwhFactory = new ReadWriteHandlerFactory();
-        AcceptHandler acceptor = new AcceptHandler(rwhFactory);
+        Lock acceptHandlerLock = new ReentrantLock();
 
-        Thread dispatcherThread;
         try {
-            SelectionKey key = ssc.register(dispatcher.selector(), SelectionKey.OP_ACCEPT);
-            key.attach(acceptor);
+            Dispatcher[] dispatchers = new Dispatcher[nSelectLoops];
 
-            dispatcherThread = new Thread(dispatcher);
-            dispatcherThread.start();
+            // start nSelectLoops select multiplexing loops
+            for (int i = 0; i < nSelectLoops; i++) {
+                Debug.DEBUG("starting dispatcher " + Integer.toString(i), DebugType.SERVER);
+                
+                Dispatcher dispatcher = new Dispatcher(i);
+
+                IReadWriteHandlerFactory rwhFactory = new ReadWriteHandlerFactory();
+                AcceptHandler acceptor = new AcceptHandler(rwhFactory, acceptHandlerLock);
+
+                SelectionKey key = ssc.register(dispatcher.selector(), SelectionKey.OP_ACCEPT);
+                key.attach(acceptor);
+
+                dispatchers[i] = dispatcher;
+                dispatcher.start();
+            }
+            // spin up management thread
+            Manager manager = new Manager(dispatchers);
+            Thread managerThread = new Thread(manager);
+            managerThread.start();
         } catch (IOException ex) {
-            System.out.println("Cannot register or start server");
+            System.out.println("Cannot register or start dispatcher thread");
             System.exit(1);
         }
-
-        Debug.DEBUG("port" + Integer.toString(port), DebugType.SERVER);
     }
 }

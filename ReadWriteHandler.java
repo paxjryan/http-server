@@ -1,9 +1,13 @@
 // Code modified from https://zoo.cs.yale.edu/classes/cs434/cs434-2023-fall/assignments/programming-proj1/examples/SelectServer/EchoLineReadWriteHandler.java
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.Authenticator.RequestorType;
+import java.net.Socket;
 import java.nio.*;
 import java.nio.channels.*;
 import java.nio.file.Files;
@@ -22,16 +26,19 @@ import java.time.ZonedDateTime;
 public class ReadWriteHandler implements IReadWriteHandler {
     private ByteBuffer inBuffer;
     private StringBuffer requestBuffer;
+    private StringBuffer cgiContentBuffer;
+    private int cgiContentLength;
 
     private Request request;
     private boolean keepalive;
     private String url;         // possibly modified during content selection; does not include doc_root
 
+    private StringBuffer cgiOutputBuffer;
     private ByteBuffer outBuffer;
-    private StringBuffer responseBody;
 
     private enum State {
         READING_REQUEST, 
+        READING_CONTENT,
         PROCESSING_REQUEST,
         SENDING_RESPONSE, 
         CONN_CLOSED
@@ -40,12 +47,13 @@ public class ReadWriteHandler implements IReadWriteHandler {
 
     public ReadWriteHandler() {
         inBuffer = ByteBuffer.allocate(4096);
-        requestBuffer = new StringBuffer(4096);
+        requestBuffer = new StringBuffer(14096);
 
         keepalive = false;
 
+        // TODO: cgi output limited to 4096 chars per chunk
+        cgiOutputBuffer = new StringBuffer(4096);
         outBuffer = ByteBuffer.allocate(4096);
-        // responseBody = new StringBuffer(4096);
 
         state = State.READING_REQUEST;
     }
@@ -63,12 +71,6 @@ public class ReadWriteHandler implements IReadWriteHandler {
 
         if (state == State.CONN_CLOSED) {
             Debug.DEBUG("Connection closed; shutdown", DebugType.NONSERVER);
-            // try {
-            //     Thread.sleep(1000);
-            // } catch (InterruptedException ex) {
-
-            // }
-
             try {
                 key.channel().close();
                 key.cancel();
@@ -82,6 +84,7 @@ public class ReadWriteHandler implements IReadWriteHandler {
 
         switch (state) {
             case READING_REQUEST:
+            case READING_CONTENT:
                 nextState = nextState | SelectionKey.OP_READ;
                 nextState = nextState & ~SelectionKey.OP_WRITE;
                 Debug.DEBUG("New state: reading -> +Read -Write", DebugType.NONSERVER);
@@ -105,12 +108,16 @@ public class ReadWriteHandler implements IReadWriteHandler {
 		// a connection is ready to be read
 		Debug.DEBUG("ReadWriteHandler: connection ready to be read", DebugType.NONSERVER);
 
-		if (state != State.READING_REQUEST) { // this call should not happen, ignore
+		if (state != State.READING_REQUEST && state != State.READING_CONTENT) { // this call should not happen, ignore
 			return;
 		}
 
-		// process data
-		processInBuffer(key);
+		// process incoming request
+		processRequestInBuffer(key);
+
+        if (state == State.PROCESSING_REQUEST) {
+            generateResponse();
+        }
 
 		// update state
 		updateSelectorState(key);
@@ -140,7 +147,7 @@ public class ReadWriteHandler implements IReadWriteHandler {
 		updateSelectorState(key);
 	}
 
-	private void processInBuffer(SelectionKey key) throws IOException {
+	private void processRequestInBuffer(SelectionKey key) throws IOException {
 		Debug.DEBUG("processInBuffer", DebugType.NONSERVER);
 
 		SocketChannel client = (SocketChannel) key.channel();
@@ -155,33 +162,116 @@ public class ReadWriteHandler implements IReadWriteHandler {
             // TODO: throw 413 Entity Too Large if buffer overflow
 			inBuffer.flip(); // read input
 
-			while (state != State.PROCESSING_REQUEST && inBuffer.hasRemaining() && requestBuffer.length() < requestBuffer.capacity()) {
-				char ch = (char) inBuffer.get();
-				// Debug.DEBUG("Ch: " + String.valueOf(ch) + " (" + Integer.toString(ch) + ")", DebugType.NONSERVER);
-				requestBuffer.append(ch);
+            while (state != State.PROCESSING_REQUEST && inBuffer.hasRemaining() && requestBuffer.length() < requestBuffer.capacity()) {
+                char ch = (char) inBuffer.get();
 
-                // "\n\r\n" (Windows) or "\r\r\n" (Mac) signal end of headers
-                if (requestBuffer.length() >= 3 && 
-                        (requestBuffer.substring(requestBuffer.length() - 3).equals("\n\r\n") || 
-                        requestBuffer.substring(requestBuffer.length() - 3).equals("\r\r\n"))) {
-                    state = State.PROCESSING_REQUEST;
-                    Debug.DEBUG("handleRead: find terminating chars", DebugType.NONSERVER);
+                // read into request buffer
+                if (state == State.READING_REQUEST) {
+                    // Debug.DEBUG("Ch: " + String.valueOf(ch) + " (" + Integer.toString(ch) + ")", DebugType.NONSERVER);
+                    requestBuffer.append(ch);
+
+                    // "\n\r\n" (Windows) or "\r\r\n" (Mac) signal end of headers
+                    if (requestBuffer.length() >= 3 && 
+                            (requestBuffer.substring(requestBuffer.length() - 3).equals("\n\r\n") || 
+                            requestBuffer.substring(requestBuffer.length() - 3).equals("\r\r\n"))) {
+                        Debug.DEBUG("handleRead: found terminating chars", DebugType.NONSERVER);
+                        
+                        request = new Request();
+                        boolean successfulParse = request.parseRequest(requestBuffer.toString());
+
+                        if (!successfulParse) {
+                            inBuffer.clear();
+                            generateResponseWithCode(400, "Bad Request", null);
+                            return;
+                        }
+
+                        // process cgi content if necessary
+                        if (request.getReqMethod() == ReqMethod.POST) {
+                            // TODO: throw error if we are missing this header
+
+                            cgiContentLength = Integer.parseInt(request.lookupHeader("Content-Length"));
+                            cgiContentBuffer = new StringBuffer(cgiContentLength+3);
+
+                            state = State.READING_CONTENT;
+                        } else {
+                            state = State.PROCESSING_REQUEST;
+                        }
+                    }
                 }
-			} 
+
+                // read into content buffer
+                else if (state == State.READING_CONTENT) {
+                    Debug.DEBUG("Writing ch to cgi buf: " + String.valueOf(ch) + " (" + Integer.toString(ch) + ")", DebugType.NONSERVER);
+                    cgiContentBuffer.append(ch);
+                    cgiContentLength--;
+
+                    if (cgiContentLength == 0) {
+                        state = State.PROCESSING_REQUEST;
+                        performCgi(key);
+                        break;
+                    }
+                }
+            }
 		}
 
 		inBuffer.clear();
-
-		if (state == State.PROCESSING_REQUEST) {
-			generateResponse();
-		}
 	}
 
-	private void generateResponse() throws IOException {
-        request = new Request();
-        request.parseRequest(requestBuffer.toString());
-        // Debug.DEBUG(request.toString(), DebugType.NONSERVER);
+    private void performCgi(SelectionKey key) {
+        // Check url integrity for accesses above doc root
+        url = request.getReqUrl();
+        if (!checkUrlIntegrity()) {
+            keepalive = false;
+            generateResponseWithCode(400, "Bad Request", null);
+        }
 
+        String[] splitUrl = url.split("/");
+        String executableName = splitUrl[splitUrl.length-1];
+
+        ProcessBuilder processBuilder = new ProcessBuilder(String.valueOf(url.substring(1)));  // new ProcessBuilder("cgi/price.cgi");
+        processBuilder.redirectOutput(ProcessBuilder.Redirect.PIPE);
+
+        Map<String, String> env = processBuilder.environment();
+        
+        String cgiQuery = cgiContentBuffer.toString();
+        Debug.DEBUG("cgi buffer: " + cgiQuery, DebugType.NONSERVER);
+        env.put("QUERY_STRING", cgiQuery);
+
+        Socket sock = ((SocketChannel) key.channel()).socket();
+        env.put("REMOTE_ADDR", sock.getInetAddress().getHostAddress());
+        // Debug.DEBUG(sock.getInetAddress().getHostAddress(), DebugType.NONSERVER);
+        env.put("REMOTE_HOST", "");
+        env.put("REMOTE_IDENT", ""); 
+        // TODO: "The REMOTE_USER variable provides a user identification string supplied by client as part of user authentication."
+        env.put("REMOTE_USER", "");
+
+        env.put("REQUEST_METHOD", "POST");
+
+        env.put("SERVER_NAME", request.lookupHeader("Host"));
+        // Debug.DEBUG(request.lookupHeader("Host"), DebugType.NONSERVER);
+        env.put("SERVER_PORT", Integer.toString(Server.getPort())); 
+        // Debug.DEBUG(Integer.toString(Server.getPort()), DebugType.NONSERVER);
+        env.put("SERVER_PROTOCOL", request.getReqProtocol());
+        // Debug.DEBUG(request.getReqProtocol(), DebugType.NONSERVER);
+        env.put("SERVER_SOFTWARE", "aPAXche/1.0.0 (Ubuntu)");
+
+        try {
+            Process process = processBuilder.start();
+            InputStream cgiProcessOutputStream = process.getInputStream();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(cgiProcessOutputStream));
+
+            String s;
+            while ((s = reader.readLine()) != null && cgiOutputBuffer.length() + s.length() < cgiOutputBuffer.capacity()) {
+                cgiOutputBuffer.append(s);
+            }
+            Debug.DEBUG("cgi success", DebugType.NONSERVER);
+        } catch (IOException e) {
+            Debug.DEBUG("Cgi error", DebugType.NONSERVER);
+            generateResponseWithCode(500, "Internal Server Error: cgi failed", null);
+        }
+    }
+
+	private void generateResponse() throws IOException {
         // determining Connection from headers and update keepalive variable
         updateKeepAlive();
 
@@ -189,7 +279,30 @@ public class ReadWriteHandler implements IReadWriteHandler {
         url = request.getReqUrl();
         if (!checkUrlIntegrity()) {
             keepalive = false;
-            generateResponse(400, "Bad Request", null);
+            generateResponseWithCode(400, "Bad Request", null);
+            return;
+        }
+
+        if (request.getReqMethod() == ReqMethod.UNKNOWN) {
+            keepalive = false;
+            generateResponseWithCode(501, "Not Implemented", null);
+            return;
+        }
+
+        if (request.getReqMethod() == ReqMethod.POST) {
+            generateResponseWithCode(200, "OK", null);
+            return;
+        }
+
+        Debug.DEBUG(request.getReqProtocol().substring(0,7), DebugType.NONSERVER);
+        if (!request.getReqProtocol().substring(0,7).equals("HTTP/1.")) {
+            generateResponseWithCode(505, "HTTP Version Not Supported", null);
+            return;
+        }
+
+        if (url.equals("/load")) {
+            generateResponseWithCode(200, "OK", null);
+            return;
         }
 
         // Perform content selection
@@ -199,7 +312,7 @@ public class ReadWriteHandler implements IReadWriteHandler {
         File f = mapUrlToFile();
         if (f == null) {
             keepalive = false; // close connections with Not Found errors
-            generateResponse(404, "Not Found", f);
+            generateResponseWithCode(404, "Not Found", null);
             return;
         }
 
@@ -207,7 +320,7 @@ public class ReadWriteHandler implements IReadWriteHandler {
         boolean modifiedSince = checkIfModifiedSince(f);
         if (!modifiedSince) {
             keepalive = false;
-            generateResponse(304, "Not Modified", null);
+            generateResponseWithCode(304, "Not Modified", null);
             return;
         }
 
@@ -215,14 +328,16 @@ public class ReadWriteHandler implements IReadWriteHandler {
         boolean accepted = checkIfAccepted(f);
         if (!accepted) {
                 Debug.DEBUG("406 error", DebugType.NONSERVER);
-                generateResponse(406, "Not Acceptable", null);
+                generateResponseWithCode(406, "Not Acceptable", null);
                 return;
         }
 
-        generateResponse(200, "OK", f);
+        generateResponseWithCode(200, "OK", f);
 	} 
 
-    private void generateResponse(int statusCode, String message, File f) {
+    private void generateResponseWithCode(int statusCode, String message, File f) {
+        Debug.DEBUG("Output buf length: " + Integer.toString(cgiOutputBuffer.length()), DebugType.NONSERVER);
+
         if (statusCode == 404) {
             url = "err_not_found.html";
             f = mapUrlToFile();
@@ -238,7 +353,12 @@ public class ReadWriteHandler implements IReadWriteHandler {
         outBuffer = ByteBuffer.allocate(headersSize + numBytes);
 
         // Output response status line with error status code and error message
-        bufferWriteString(outBuffer, request.getReqProtocol() + " " + Integer.toString(statusCode) + " " + message);
+        String protocol = request.getReqProtocol();
+        if (protocol != null) {
+            bufferWriteString(outBuffer, protocol + " " + Integer.toString(statusCode) + " " + message);
+        } else {
+            bufferWriteString(outBuffer, "HTTP/1.1 " + Integer.toString(statusCode) + " " + message);
+        }
 
         // Output date header
         DateTimeFormatter dtf = DateTimeFormatter.ofPattern(("eee, dd MMM uuuu HH:mm:ss"));
@@ -246,55 +366,59 @@ public class ReadWriteHandler implements IReadWriteHandler {
         ZonedDateTime gmtNow = now.withZoneSameInstant(ZoneId.of("GMT"));
         bufferWriteString(outBuffer, "Date: " + dtf.format(gmtNow) + " GMT");
 
-        // Ouput server header
+        // Output server header
         bufferWriteString(outBuffer, "Server: aPAXche/1.0.0 (Ubuntu)");
 
-        if (f != null) {
-            // Output last-modified header
+        if (request.getReqMethod() == ReqMethod.POST) {
+            bufferWriteString(outBuffer, "Content-Length: " + Integer.toString(cgiOutputBuffer.length()));
 
-            ZonedDateTime fileModifiedTime = ZonedDateTime.ofInstant(Instant.ofEpochMilli(f.lastModified()), ZoneId.systemDefault());
-            ZonedDateTime fileModifiedGmtTime = fileModifiedTime.withZoneSameInstant(ZoneId.of("GMT"));
-            bufferWriteString(outBuffer, "Last-Modified: " + dtf.format(fileModifiedGmtTime) + " GMT");
-
-            // Output content-type header
-            String fileType = url.substring(url.lastIndexOf(".")+1);
-            String contentType = "";
-
-            try {
-                contentType = Files.probeContentType(f.toPath());
-            } catch (IOException ex) {}
-
-            // switch (fileType) {
-            //     case "html":
-            //     case "htm":
-            //         contentType = "text/html"; break;
-            //     case "jpg":
-            //         contentType = "image/jpeg"; break;
-            //     case "gif":
-            //         contentType = "image/gif"; break;
-            //     default:
-            //         contentType = "text/plain"; break;
-            // }
-            bufferWriteString(outBuffer, "Content-Type: " + contentType);
-
-            // Output content-length header
-            bufferWriteString(outBuffer, "Content-Length: " + Integer.toString((int) f.length()));
-        }
-
-        // CRLF: End of headers, beginning of reponse body
-        outBuffer.put((byte) '\r');
-        outBuffer.put((byte) '\n');
-
-        // Output response body
-        if (f != null) {
-            outputResponseBody(f);
+            // CRLF: End of headers, beginning of reponse body
             outBuffer.put((byte) '\r');
             outBuffer.put((byte) '\n');
+
+            Debug.DEBUG("Output buf length: " + Integer.toString(cgiOutputBuffer.length()), DebugType.NONSERVER);
+            bufferWriteString(outBuffer, cgiOutputBuffer.toString());
+        } else {
+            if (f != null) {
+                // Output last-modified header
+                ZonedDateTime fileModifiedTime = ZonedDateTime.ofInstant(Instant.ofEpochMilli(f.lastModified()), ZoneId.systemDefault());
+                ZonedDateTime fileModifiedGmtTime = fileModifiedTime.withZoneSameInstant(ZoneId.of("GMT"));
+                bufferWriteString(outBuffer, "Last-Modified: " + dtf.format(fileModifiedGmtTime) + " GMT");
+
+                // Output content-type header
+                String contentType = "";
+
+                try {
+                    contentType = Files.probeContentType(f.toPath());
+                } catch (IOException ex) {}
+                
+                bufferWriteString(outBuffer, "Content-Type: " + contentType);
+
+                // Output content-length header
+                bufferWriteString(outBuffer, "Content-Length: " + Integer.toString((int) f.length()));
+            }
+
+            // CRLF: End of headers, beginning of reponse body
+            outBuffer.put((byte) '\r');
+            outBuffer.put((byte) '\n');
+
+            // Output response body
+            if (f != null) {
+                outputResponseBody(f);
+                outBuffer.put((byte) '\r');
+                outBuffer.put((byte) '\n');
+            }
         }
 
+        // Reset all buffers at once
 		outBuffer.flip();
         requestBuffer.delete(0, requestBuffer.length());
+        if (request.getReqMethod() == ReqMethod.POST) {
+            cgiContentBuffer.delete(0, cgiContentBuffer.length());
+            cgiOutputBuffer.delete(0, cgiOutputBuffer.length());
+        }
         request = null;
+
 		state = State.SENDING_RESPONSE;
     }
 
@@ -397,8 +521,7 @@ public class ReadWriteHandler implements IReadWriteHandler {
             ZonedDateTime fileModifiedTime = ZonedDateTime.ofInstant(Instant.ofEpochMilli(f.lastModified()), ZoneId.systemDefault());
             ZonedDateTime fileModifiedGmtTime = fileModifiedTime.withZoneSameInstant(ZoneId.of("GMT"));
 
-            // TODO: if file was not modified after required time
-            return fileModifiedTime.isAfter(ifModSinceTime);
+            return fileModifiedGmtTime.isAfter(ifModSinceTime);
         }
         return true;
     }
@@ -428,14 +551,10 @@ public class ReadWriteHandler implements IReadWriteHandler {
             byte[] allBytes = fileInputStream.readAllBytes();
 
             outBuffer.put(allBytes);
-
-            // for (int i = 0; i < numBytes; i++) {
-            //     responseBody.append((char) fileInputStream.read());
-            // }
-
-            // bufferWriteString(outBuffer, responseBody.toString());
+            fileInputStream.close();
         } catch (IOException ex) {
-            // TODO
+            Debug.PRINT("ReadWriteHandler.java/outputResponseBody: unknown error reading from file input stream, system exiting");
+            System.exit(1);
         }
         
     }

@@ -10,10 +10,9 @@ Date    | Time      | Task
 10/22       2hrs30      content selection; if-modified-since; user-agent; begin server config
 10/22       2hrs        server config
 10/23       1hr30       fixed output bug which assumed all output was text; changed content-type to use library dictionary; now works with netcat and Chrome
-10/23       4:15-       virtual host bug; updated README for first submission
-
-Note:
-http://localhost:1223/time.log
-
-nc -C localhost 1223 < testreq.txt
-(-C needed to tell netcat to use \r\n for newline instead of \n)
+10/23       1hr30       virtual host bug; updated README for first submission
+10/23       2hrs        started part B; learning to use synchronized block
+10/25       2hrs        submitting for first deadline
+12/1        1hr         nSelectLoops implementation
+12/2        3hrs        nSelectLoops implementation; graceful shutdown
+12/3        7hrs        cgi; more response codes; testing; basic load URL; writing README

@@ -1,0 +1,73 @@
+Part 1c.nginx: nginx Design
+nginx is currently the most-widely used HTTP server. Please read nginx source code, and developer guide to answer the following questions. You can use the developer guide but need to add reference to the source code.
+
+a. Although nginx has both Master and Worker, the design is the symmetric design that we covered in class: multiple Workers compete on the shared welcome socket (accept). One issue about the design we said in class is that this design does not offer flexible control such as load balance. Please describe how nginx introduces mechanisms to allow certain load balancing among workers? Related with the shared accept, one issue is that when a new connection becomes acceptable, multiple workers can be notified, creating contention. Please read nginx event loop and describe how nginx tries to resolve the contention.
+***ANSWER:***
+nginx resolves the contention with a mutex on the accept welcome socket. According to the documentation, "If accept_mutex is enabled, worker processes will accept new connections by turn. Otherwise, all worker processes will be notified about new connections, and if volume of new connections is low, some of the worker processes may just waste system resources."* Also, contention will not be a problem on Linux systems using epoll, if the system supports the EPOLLEXCLUSIVE flag that allows for exclusive accept notifications.
+
+The check for this mutex happens in the source code at src/event/ngx_event.c#L219.
+
+*https://nginx.org/en/docs/ngx_core_module.html#accept_mutex
+
+
+
+b. The nginx event loop processes both io events and timers. If it were nginx, how would you implement the 3-second timeout requirement of this project?
+***ANSWER:***
+When a worker thread accepts a new connection: 
+- canTimeout = true for that connection
+- add a 3-second timer to the timer tree (ngx_event_timer_rbtree)
+    - attach the connection to the timer
+    - timer handler checks if connection's canTimeout == true; if so, timeout has run out, and connection should be dropped
+When a complete request has been read from the connection:
+- canTimeout = false for that connection
+Approximately after the timer expires:
+- nginx event loop processes expired timers [ngx_process_events_and_timers()* calls ngx_event_expire_timers()] and calls their handlers
+- timer handler will be called and connection will be dropped if canTimeout == true
+
+*https://github.com/nginx/nginx/blob/master/src/event/ngx_event.c#L261
+
+
+
+c. nginx processes HTTP in 11 phases. What are the phases? Please list the checker functions of each phase.
+***ANSWER:***
+the phases and associated checkers are 
+    NGX_HTTP_POST_READ_PHASE = 0,   // ngx_http_core_generic_phase()
+
+    NGX_HTTP_SERVER_REWRITE_PHASE,  // ngx_http_core_rewrite_phase()
+
+    NGX_HTTP_FIND_CONFIG_PHASE,     // ngx_http_core_find_config_phase()
+    NGX_HTTP_REWRITE_PHASE,         // ngx_http_core_rewrite_phase()
+    NGX_HTTP_POST_REWRITE_PHASE,    // ngx_http_core_post_rewrite_phase()
+
+    NGX_HTTP_PREACCESS_PHASE,       // ngx_http_core_generic_phase()
+
+    NGX_HTTP_ACCESS_PHASE,          // ngx_http_core_access_phase()
+    NGX_HTTP_POST_ACCESS_PHASE,     // ngx_http_core_post_access_phase()
+
+    NGX_HTTP_PRECONTENT_PHASE,      // ngx_http_core_generic_phase()
+
+    NGX_HTTP_CONTENT_PHASE,         // ngx_http_core_content_phase()
+
+    NGX_HTTP_LOG_PHASE
+
+- phases specified in enum ngx_http_phases (src/http/ngx_http_core_module.h#110)
+- checker functions specified in src/http/ngx_http_core_module.c starting from L885 
+- checker functions assigned to phases in ngx_http_init_phase_handlers() (src/http/ngx_http.c#L454)
+- phase descriptions found at https://nginx.org/en/docs/dev/development_guide.html#phases
+
+
+
+d. A main design feature of nginx is efficient support of upstream; that is, forward request to an upstream server. Can you describe the high level design?
+***ANSWER:***
+Upstream configuration is specified in an upstream block in the nginx configuration file. Initializing the load balancer causes it to start all upstream servers and add them to a data structure which is convenient for lookup (e.g. ngx_stream_upstream_rr_peer_data_t in src/stream/ngx_stream_upstream_round_robin.h#L132). When the load balancer receives a request, it will call the get() API to use the configured load-balancing module in order to pick an upstream server to forward the request to and get its sockaddr, socklen, and name. nginx defaults to round robin, but other modules like least_conn, hash, or custom modules can be used instead - and in fact, the first two are implemented in nginx as extensions of rr. The load balancer can also call free() to notify an upstream server when no more requests will be sent to it.
+
+
+
+e. nginx introduces a buffer type ngx_buf_t. Please briefly compare ngx_buf_t vs ByteBuffer we covered for Java nio?
+***ANSWER:***
+- ngx_buf_t is a struct, not an object like ByteBuffer. Thus, ByteBuffer has methods associated with it for reading into the buffer until a limit is reached (read), writing from the buffer until a limit is reached (write), flipping, compacting, etc. Yet buf_t has several struct fields that are more specific to its use case (e.g. fields for specifying read-only or writable memory), whereas ByteBuffer is constrained to be more generalized. Both implementations share some extremely basic buffer functionality, such as the ability to allocate and do random memory accesses: buf_t is allocated from start to end, while ByteBuffer is allocated from 0 to capacity.
+- ByteBuffer abstracts away many of the details of memory management that buf_t retains, to provide a simplified API where the programmer need only understand the position, limit, and capacity of the buffer and some of its methods (see above)
+- buf_t is designed to represent data in memory OR data in a file, whereas ByteBuffer can only hold data in memory (though file data can read into the ByteBuffer by reading it into memory)
+- buf_ts are often linked in chains (essentially a linked list of buf_ts; see struct ngx_chain_s)
+
+Implementation of ngx_buf_t in https://github.com/nginx/nginx/blob/master/src/core/ngx_buf.c#L12
