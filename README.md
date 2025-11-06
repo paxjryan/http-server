@@ -30,8 +30,6 @@ Part 1B is mostly implemented:
 - load URL
 Only timeout is not yet implemented.
 
-Part 1C is finished and documented in response.txt. I chose to answer the nginx set of questions.
-
 ## Testing
 I have thoroughly tested all written server functionality with all of the following commands:
 - Telnet: telnet localhost 1223
@@ -44,12 +42,21 @@ POST/CGI was tested with the following command: curl -v -d "@cgi/post.data" -X P
 I performed throughput benchmarking with the following command: ab -n 10000 -c 10 http://localhost:6789/index_files/jnp3rd.jpg
 
 Concurrency Level:      10
+
 Time taken for tests:   9.722 seconds
+
 Complete requests:      10000
+
 Failed requests:        0
+
 Total transferred:      1070450000 bytes
+
 HTML transferred:       1068610000 bytes
+
 Requests per second:    1028.56 [#/sec] (mean)
+
 Time per request:       9.722 [ms] (mean)
+
 Time per request:       0.972 [ms] (mean, across all concurrent requests)
+
 Transfer rate:          107521.96 [Kbytes/sec] received
